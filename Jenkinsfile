@@ -13,7 +13,7 @@ pipeline {
         // obtenim el codi del repostori remot
         stage('Checkout') {
             steps {
-                checkout scm
+                //checkout scm
                 sh '''
                 ls -al
                 '''
