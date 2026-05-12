@@ -1,56 +1,58 @@
 pipeline {
+    // agent { label 'win'}
     agent any
-
-     stages {
-        stage('Get Code') {
+    stages {
+        stage('Checkout') {
             steps {
-                // Obtener código del repo
-                git 'https://github.com/anieto-unir/helloworld.git'
+                git 'https://github.com/daniunirdevops/helloworld.git'
             }
         }
-
-    stage('Build') {
-        steps {
-            echo 'Eyyyy, esto es Python. No hay que compilar nada!!!'
-	    echo WORKSPACE
-	    bat 'dir'
-        }
-    }
-
-    stage('Tests')
-    {
-        parallel {
-
-            stage('Unit') {
-                steps {
-                    catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                        bat '''
-                                set PYTHONPATH=%WORKSPACE%
-                                pytest --junitxml=result-unit.xml test\\unit
-                        '''
-                    }
-                }
-            }
-            
-            stage('Rest') {
-                steps {
-                    bat '''
-                        set FLASK_APP=app\\api.py
-                        set FLASK_ENV=development
-                        start flask run
-                        start java -jar C:\\Unir\\Ejercicios\\wiremock\\wiremock-jre8-standalone-2.28.0.jar --port 9090 --root-dir test\\wiremock
-                        set PYTHONPATH=%WORKSPACE%
-                        pytest --junitxml=result-rest.xml test\\rest
+        
+        stage('Test unit') {
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    sh '''
+                        export PYTHONPATH=$WORKSPACE
+                        python3 -m pytest test/unit --junitxml=result-unit.xml 
                     '''
-                }    
-            }    
+                }                
+            }
         }
-    }
+        
+        stage('Test rest') {
+            steps {
+                
+                sh '''
+
+                export FLASK_APP=app/api.py
+                export FLASK_ENV=development
+                    
+                python3 -m flask run --host=0.0.0.0 --port=5000 > flask.log 2>&1 &
+                FLASK_PID=$!
+
+                java -jar /opt/wiremock.jar --port 9090 --root-dir $WORKSPACE/test/wiremock > wiremock.log 2>&1 &
+                WIREMOCK_PID=$!
     
-    stage ('Results') {
-        steps {
-            junit 'result*.xml'
+                echo "Esperant Flask..."
+                timeout 30 sh -c 'until curl -s http://localhost:5000; do sleep 1; done'
+    
+                echo "Esperant WireMock..."
+                timeout 30 sh -c 'until curl -s http://localhost:9090/calc/sqrt/64; do sleep 1; done'
+                
+                echo "Executant tests..."
+                python3 -m pytest test/rest --junitxml=result-rest.xml
+
+                kill $FLASK_PID
+                kill $WIREMOCK_PID                
+                '''
+            }
         }
+        
+        stage ('Results') {
+            steps {
+                junit 'result*.xml'
+            }
+        } 
+
     }
-  }
 }
