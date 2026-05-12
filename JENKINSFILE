@@ -23,7 +23,6 @@ pipeline {
             steps {
                 
                 sh '''
-
                 export FLASK_APP=app/api.py
                 export FLASK_ENV=development
                     
