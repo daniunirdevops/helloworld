@@ -1,6 +1,6 @@
 pipeline {
-    // agent { label 'win'}
-    agent any
+    agent { label 'linux && flask && wiremock'}
+    // agent any
     stages {
         stage('Checkout') {
             steps {
