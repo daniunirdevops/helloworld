@@ -1,4 +1,5 @@
 pipeline {
+    // forcem que l'agent sigui linux amb flask i wiremock instal·lat
     agent { label 'linux && flask && wiremock'}
     // agent any
     stages {
