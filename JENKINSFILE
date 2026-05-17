@@ -64,7 +64,7 @@ pipeline {
                                 -r . \
                                 -f custom \
                                 -o bandit.out \
-                                --msg-template "{abspath}:{line}: warning: {msg}"
+                                --msg-template "{abspath}:{line}: {severity}: {msg}"
                     '''
                     sh 'cat bandit.out'
 
