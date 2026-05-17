@@ -1,0 +1,218 @@
+pipeline {
+    // timeout to raise flask and wiremock services (for the Rest API)
+    environment {
+        API_TIMEOUT = 60
+    }    
+    agent { label 'linux && agent'}     // default
+    stages {
+        stage('Checkout') {
+            steps {
+                git 'https://github.com/daniunirdevops/helloworld.git'
+                stash name: 'code', includes: 'app/**, test/**, pytest.ini'
+            }
+        } // end stage('Checkout')
+
+        stage('parallel') {
+            parallel {
+
+                stage('static') {
+                      
+                    agent { label 'windows' }
+                    steps {
+                        script {
+                            if (isUnix()) {
+                                sh 'whoami && hostname'
+                            } else {
+                                bat 'whoami && hostname'
+                            }                        
+                        }
+                        unstash 'code'
+
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            bat '''
+                                SET PYTHONPATH=$WORKSPACE
+                                python -m flake8 --format=pylint --exit-zero --output-file=flake8.out app  
+                            '''
+                            recordIssues (
+                                tools: [flake8(name: 'Flake8', pattern: 'flake8.out')], 
+                                qualityGates : [
+                                    [threshold:8, type: 'TOTAL', unstable: true], [threshold: 10, type: 'TOTAL', unstable: false]
+                                    ]
+                                )
+                        }                
+                    }
+                } // end stage('static') 
+                // -------------------------------
+                stage('security') {
+                    steps {
+                        script {
+                            if (isUnix()) {
+                                sh 'whoami && hostname'
+                            } else {
+                                bat 'whoami && hostname'
+                            }                        
+                        }
+                        unstash 'code'
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            // bandit is not compatible with python 3.14
+                            // we will use a docker image with python 3.12 with bandit
+                            // but it is not compatible with -f custom...
+                            // in the end I use python 3.13
+                            /*
+                            sh '''
+                                export PYTHONPATH=$WORKSPACE
+                                python3 -m bandit \
+                                        --exit-zero \
+                                        -r . \
+                                        -f custom \
+                                        -o bandit.out \
+                                        --msg-template "{abspath}:{line}: {severity}: {msg}"
+                            '''
+                            */
+                            // docker returns 1 if there are vulnerabilities so I put || true and validate it with recordIssues
+                            sh '''
+                                docker run --pull=never --rm \
+                                    -v $WORKSPACE:/src \
+                                    -w /src \
+                                    bandit-ci \
+                                    -r . \
+                                    -f custom \
+                                    -o bandit.out \
+                                    --exit-zero \
+                                    --msg-template "{abspath}:{line}: {severity}: {msg}" 
+                            '''
+                            sh 'cat bandit.out'
+
+                            recordIssues(
+                                tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')], 
+                                qualityGates: [
+                                    [threshold: 2, type: 'TOTAL', unstable: true],
+                                    [threshold: 4, type: 'TOTAL', unstable: false]
+                                ]
+                            )
+
+                        }                
+                    }
+                }  // end stage('security') 
+                // -------------------------
+
+                stage('Unit + Coverage') {
+                    steps {
+                        agent { label 'linux && node_lnx_2' } 
+                        script {
+                            if (isUnix()) {
+                                sh 'whoami && hostname'
+                            } else {
+                                bat 'whoami && hostname'
+                            }                        
+                        }
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            // info: https://coverage.readthedocs.io/en/7.14.0/
+                            sh '''
+                                export PYTHONPATH=$WORKSPACE
+                                python3 -m coverage run --branch \
+                                --source=app --omit=app/__init__.py,app/api.py \
+                                -m pytest test/unit --junitxml=result-unit.xml 
+
+                                python3 -m coverage xml -o coverage.xml
+                            '''
+                        }
+
+                        recordCoverage (
+                            qualityGates: [
+                                [criticality: 'NOTE', integerThreshold: 95, metric: 'LINE', threshold: 95.0],
+                                [criticality: 'ERROR', integerThreshold: 85, metric: 'LINE', threshold: 85.0],
+                                [criticality: 'NOTE', integerThreshold: 90, metric: 'BRANCH', threshold: 90.0],
+                                [criticality: 'ERROR', integerThreshold: 80, metric: 'BRANCH', threshold: 80.0]
+                            ],
+                            tools: [
+                                [parser: 'COBERTURA', pattern: 'coverage.xml']
+                            ]
+                        )
+                        // show result
+                        junit 'result-unit.xml'
+                    }
+                }  // end stage('Unit + Coverage')
+                // ----------------------------
+                
+            }   // end parallel
+        }   // end stage('Tests')
+        // ---------------------------
+        stage('Rest') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh 'whoami && hostname'
+                    } else {
+                        bat 'whoami && hostname'
+                    }                        
+                }
+                unstash 'code'
+
+                sh '''
+                export PYTHONPATH=$WORKSPACE
+                python3 -m flask --app app/api.py run --port=5000 > flask.log 2>&1 &
+                # recollim l'ID
+                FLASK_PID=$!
+                java -jar /opt/wiremock.jar --port 9090 --root-dir $WORKSPACE/test/wiremock > wiremock.log 2>&1 &
+                WIREMOCK_PID=$!
+                
+                echo "Waiting Flask..."
+                timeout ${API_TIMEOUT} sh -c 'until curl -s http://localhost:5000; do sleep 1; done'
+    
+                echo "Waiting  WireMock..."
+                timeout ${API_TIMEOUT} sh -c 'until curl -s http://localhost:9090/calc/sqrt/64; do sleep 1; done'
+                
+                echo "Run tests..."
+                python3 -m pytest test/rest --junitxml=result-rest.xml
+
+                kill $FLASK_PID
+                kill $WIREMOCK_PID                
+                '''
+                // show result
+                junit 'result-rest.xml'
+            }
+        } // end stage('Rest')
+        // ---------------------------
+        stage('Performance') {
+            /*
+            this option is not recommended, but in this case for use purpose is valid
+            agent { label 'linux && master' }   
+            */
+            agent { label 'linux' }   // any linux node
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh 'whoami && hostname && pwd'
+                    } else {
+                        bat 'whoami && hostname && cd'
+                    }                        
+                }
+                unstash 'code'
+                sh '''
+                export PYTHONPATH=$WORKSPACE
+                python3 -m flask --app app/api.py run --port=5000 > flask.log 2>&1 &
+                FLASK_PID=$!
+
+                echo "Waiting Flask..."
+                timeout ${API_TIMEOUT} sh -c 'until curl -s http://localhost:5000; do sleep 1; done'
+                
+                echo "Run  jmeter..."
+                /opt/jmeter/bin/jmeter -n -t test/jmeter/calc_add_substract.jmx -f -l flask.jtl
+                
+                kill $FLASK_PID
+                '''
+                // make report
+                perfReport sourceDataFiles: 'flask.jtl'
+            }
+        } // end stage('Performance') 
+        
+    } // end stages
+    
+    post {
+        always {
+            cleanWs()   // clean all agents used
+        }
+    }
+    
+}
