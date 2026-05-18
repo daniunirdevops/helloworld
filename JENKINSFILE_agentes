@@ -42,6 +42,11 @@ pipeline {
                                 )
                         }                
                     }
+                    post {
+                        always {
+                            deleteDir()   // clean only this agents
+                        }
+                    }
                 } // end stage('static') 
                 // -------------------------------
                 stage('security') {
@@ -94,6 +99,11 @@ pipeline {
 
                         }                
                     }
+                    post {
+                        always {
+                            deleteDir()   // clean only this agents
+                        }
+                    }
                 }  // end stage('security') 
                 // -------------------------
 
@@ -133,6 +143,11 @@ pipeline {
                         )
                         // show result
                         junit 'result-unit.xml'
+                    }
+                    post {
+                        always {
+                            deleteDir()   // clean only this agents
+                        }
                     }
                 }  // end stage('Unit + Coverage')
                 // ----------------------------
@@ -174,6 +189,11 @@ pipeline {
                 // show result
                 junit 'result-rest.xml'
             }
+            post {
+                always {
+                    deleteDir()   // clean only this agents
+                }
+            }
         } // end stage('Rest')
         // ---------------------------
         stage('Performance') {
@@ -206,6 +226,11 @@ pipeline {
                 '''
                 // make report
                 perfReport sourceDataFiles: 'flask.jtl'
+            }
+            post {
+                always {
+                    deleteDir()   // clean only this agents
+                }
             }
         } // end stage('Performance') 
         
