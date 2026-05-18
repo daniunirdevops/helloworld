@@ -7,7 +7,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git 'https://github.com/daniunirdevops/helloworld.git'
+                // git 'https://github.com/daniunirdevops/helloworld.git'
                 stash name: 'code', includes: 'app/**, test/**, pytest.ini'
             }
         } // end stage('Checkout')
