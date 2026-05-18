@@ -87,7 +87,6 @@ pipeline {
                                     --exit-zero \
                                     --msg-template "{abspath}:{line}: {severity}: {msg}" 
                             '''
-                            sh 'cat bandit.out'
 
                             recordIssues(
                                 tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')], 
